@@ -17,7 +17,7 @@ This project demonstrates a highly available and scalable API architecture on AW
 
 ## Architecture
 
-![alt text](image.png)
+![alt text](arch.png)
 
 ## Prerequisites
 
