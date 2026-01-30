@@ -2,6 +2,8 @@ const express = require('express');
 const http = require('http');
 const app = express();
 
+let isShuttingDown = false;
+
 let awsMetadata = {
   availabilityZone: null,
   cluster: null,
@@ -97,9 +99,26 @@ app.use((req, res, next) => {
   next();
 });
 
+app.use((req, res, next) => {
+  if (isShuttingDown) {
+    log('warn', 'Request rejected during shutdown', { method: req.method, url: req.url });
+    return res.status(503).json({ error: 'Server is shutting down' });
+  }
+  next();
+});
+
 app.get('/health', (req, res) => {
+  if (isShuttingDown) {
+    log('warn', 'Health check during shutdown');
+    return res.status(503).json({ status: 'shutting_down' });
+  }
+
   log('debug', 'Health check endpoint accessed');
-  res.status(200).send('ok');
+  res.status(200).json({
+    status: 'ok',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString()
+  });
 });
 
 app.get('/api', (req, res) => {
@@ -132,7 +151,7 @@ app.use((err, req, res) => {
 });
 
 const PORT = 3000;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   log('info', 'Server started successfully', {
     port: PORT,
     nodeVersion: process.version,
@@ -141,3 +160,23 @@ app.listen(PORT, () => {
     hostname: require('os').hostname()
   });
 });
+
+const SHUTDOWN_TIMEOUT = 30000;
+
+function gracefulShutdown(signal) {
+  log('info', `${signal} received, starting graceful shutdown`, { pid: process.pid });
+  isShuttingDown = true;
+
+  server.close(() => {
+    log('info', 'All connections closed, shutting down');
+    process.exit(0);
+  });
+
+  setTimeout(() => {
+    log('error', 'Shutdown timeout reached, forcing exit');
+    process.exit(1);
+  }, SHUTDOWN_TIMEOUT);
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
